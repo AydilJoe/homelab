@@ -20,11 +20,28 @@
 # Read-only consumers are outside the contract and mount only what they need:
 # Jellyfin /media:ro, addon /data/media:ro, Caddy /srv/media:ro.
 
+# LOG ROTATION — applied to every service via *default-logging below.
+#
+# Docker's json-file driver is UNBOUNDED by default: a chatty container will
+# grow its log until the disk fills, and the failure shows up as writes failing
+# elsewhere rather than as anything pointing at logs. qBittorrent and Jellyfin
+# are the usual offenders here.
+#
+# 10 MB x 3 files caps each container at ~30 MB, so the whole stack cannot
+# exceed ~300 MB of logs. That is still plenty of history for `docker logs` to
+# be useful when debugging.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent
     container_name: qbittorrent
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -43,6 +60,7 @@ services:
     image: lscr.io/linuxserver/prowlarr
     container_name: prowlarr
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -59,6 +77,7 @@ services:
     image: lscr.io/linuxserver/sonarr
     container_name: sonarr
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -74,6 +93,7 @@ services:
     image: lscr.io/linuxserver/radarr
     container_name: radarr
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -89,6 +109,7 @@ services:
     image: lscr.io/linuxserver/bazarr
     container_name: bazarr
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -105,6 +126,7 @@ services:
     image: lscr.io/linuxserver/jellyfin
     container_name: jellyfin
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     environment:
       PUID: ${PUID}
@@ -128,6 +150,7 @@ services:
     build: ./addon
     container_name: addon
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     ports: ["127.0.0.1:7000:7000"]  # loopback ONLY — tailscaled lives in this
                                     # LXC, so a 0.0.0.0 binding would expose
@@ -179,6 +202,7 @@ services:
     image: ghcr.io/seerr-team/seerr:latest
     container_name: jellyseerr
     restart: unless-stopped
+    logging: *default-logging
     init: true
     networks: [medianet]
     environment:
@@ -201,6 +225,7 @@ services:
     container_name: tailscale
     hostname: media                       # becomes the MagicDNS name
     restart: unless-stopped
+    logging: *default-logging
     networks: [medianet]
     # Published on behalf of caddy, which shares this namespace. 5055 is
     # Jellyseerr's TLS port — Caddy terminates it, jellyseerr itself never
@@ -237,6 +262,7 @@ services:
     image: caddy:alpine
     container_name: caddy
     restart: unless-stopped
+    logging: *default-logging
     environment:
       # The Caddyfile builds its site address from {$TAILNET}, so no tailnet
       # name is hard-coded in the repo and the same file works anywhere.
