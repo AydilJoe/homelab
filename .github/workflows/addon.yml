@@ -1,0 +1,40 @@
+# The addon is the only thing here that is code rather than configuration, so
+# it is the only thing worth a CI job. Typecheck covers src AND test (vitest
+# transpiles without checking, so `npm test` alone would miss type errors in
+# the tests themselves).
+name: addon
+
+on:
+  push:
+    paths: ["addon/**", ".github/workflows/addon.yml"]
+  pull_request:
+    paths: ["addon/**", ".github/workflows/addon.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: addon
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22          # package.json requires >=22
+          cache: npm
+          cache-dependency-path: addon/package-lock.json
+
+      # better-sqlite3 is a native module; npm ci builds it from source here.
+      - run: npm ci
+
+      - name: typecheck (src + tests)
+        run: npm run typecheck
+
+      - name: build
+        run: npm run build
+
+      - name: test
+        run: npm test

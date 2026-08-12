@@ -3,7 +3,7 @@
 Operating procedures for the media stack: start, stop, update, back up,
 restore, and the failure modes the spec warns about.
 
-The spec (`../homelab-build-spec.md`) is the reference. This is the
+The build spec is kept private; section references (§x.y) point at it. This is the
 day-two document.
 
 ---

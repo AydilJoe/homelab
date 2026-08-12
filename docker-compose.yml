@@ -1,10 +1,14 @@
 # Homelab media stack — runs inside LXC 101 (Proxmox, unprivileged).
-# Authoritative spec: ../homelab-build-spec.md  (§3.2 mounts, §4 services, §5 ingress)
+# Section refs (§3.2 mounts, §4 services, §5 ingress) are to the private build
+# spec; docs/decisions.md restates every decision it drove.
 #
 # INGRESS MODE is one line in .env:
-#   LAN (default)   CADDYFILE=./caddy/Caddyfile.lan   plain HTTP on :80
-#   Tailnet (§5.2)  CADDYFILE=./caddy/Caddyfile       TLS issued by tailscaled
-# Nothing here requires a tailnet in LAN mode.
+#   Tailnet (default)  CADDYFILE=./caddy/Caddyfile      TLS issued by tailscaled,
+#                                                       plus a plain :80 site for
+#                                                       LAN clients without it
+#   LAN only           CADDYFILE=./caddy/Caddyfile.lan  plain HTTP, no tailnet
+# The tailnet file builds its site address from ${TAILNET}, so nothing
+# host-specific is committed.
 #
 # HARDLINK CONTRACT (§3.2, C4) — non-negotiable:
 # qbittorrent, sonarr, radarr and bazarr each mount ${DATA_ROOT} at /data.
@@ -153,10 +157,11 @@ services:
   # credentials they already have and never touch Radarr/Sonarr directly.
   #
   # Served on its own PORT rather than a path (see the :5055 block in
-  # caddy/Caddyfile): Jellyseerr inherits Overseerr's lack of subpath support —
-  # it builds absolute URLs from the root, so /jellyseerr/* returns the page and
-  # then 404s every asset. A port keeps it on the same hostname and the same
+  # caddy/Caddyfile): it inherits Overseerr's lack of subpath support — it
+  # builds absolute URLs from the root, so /seerr/* returns the page and then
+  # 404s every asset. A port keeps it on the same hostname and the same
   # certificate, which is what actually matters.
+  #
   # Seerr — the project formerly known as Jellyseerr. Overseerr and Jellyseerr
   # merged into one codebase under seerr-team, moving to ghcr.io and to 3.x.
   # `fallenbagel/jellyseerr:latest` is frozen at 2.7.3, which is why its own

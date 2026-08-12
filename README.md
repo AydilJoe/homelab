@@ -1,17 +1,58 @@
 # homelab
 
-Media stack for a single box: qBittorrent + Prowlarr + Sonarr + Radarr + Bazarr
-for acquisition, Jellyfin for playback, Seerr for search-and-request, a custom
-Stremio addon serving the local library, Caddy in front of all of it, and
-tailscaled providing the identity the TLS certificate is issued against.
+[![addon](https://github.com/AydilJoe/homelab/actions/workflows/addon.yml/badge.svg)](https://github.com/AydilJoe/homelab/actions/workflows/addon.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Target is Docker Compose **inside LXC 101** (unprivileged, `/dev/dri` passed
-through for Quick Sync). It currently runs on a Windows dev box under Docker
-Desktop; the differences are recorded in ADR-014 through ADR-017.
+A self-hosted media stack for a single box — the `*arr` suite for acquisition,
+Jellyfin for playback, Seerr for requests, and a custom Stremio addon that
+serves the local library. Everything sits behind one Caddy origin with TLS
+issued by Tailscale, so there is one hostname, one certificate, and nothing
+exposed to the internet.
 
-**The spec is the reference, this README is orientation.**
-Read [`../homelab-build-spec.md`](../homelab-build-spec.md) before changing
-anything — it carries the hard constraints, the build phases, and the gates.
+Built for an unprivileged Proxmox LXC with `/dev/dri` passed through for Quick
+Sync. It currently runs on a Windows dev box under Docker Desktop; every place
+those two differ is recorded in an ADR rather than left as a surprise.
+
+**What makes this different from the usual compose gist:** the failure modes
+are written down. `docs/runbook.md` §6 is a list of things that actually broke
+here and how they were diagnosed — silent URL-base breakage, a symlinked
+tailscaled socket, a hardlink check that lies on NTFS, a `202` that persists
+config without reloading it. The README's build order exists in the sequence it
+does because doing it any other way costs you an afternoon.
+
+```mermaid
+flowchart LR
+    U["you / household"] -->|"search & request"| SR[Seerr]
+    U -->|watch| JF[Jellyfin]
+    U -->|"catalog"| ST[Stremio addon]
+
+    SR --> RA[Radarr]
+    SR --> SO[Sonarr]
+    RA & SO -->|"search"| PR[Prowlarr]
+    PR -->|"your indexers"| IX(["sources — operator's choice"])
+    RA & SO -->|grab| QB[qBittorrent]
+
+    QB -->|"downloads to"| T[("/data/torrents")]
+    RA & SO -->|"hardlink import"| M[("/data/media")]
+    T -.->|"same filesystem"| M
+    BZ[Bazarr] -->|"SRT sidecars"| M
+
+    M --> JF
+    M --> ST
+
+    JF & SR & RA & SO & PR & BZ & QB & ST --- CA{{"Caddy · one origin · TLS"}}
+    CA --- TS(["tailscaled — node 'media'"])
+
+    style IX stroke-dasharray: 4 4
+    style CA stroke-width:2px
+    style TS stroke-dasharray: 4 4
+```
+
+This repo is the implementation. It was built against a written spec that is
+kept private — section references throughout (§3.2, §5.2, §6.3 …) point at it.
+You do not need it: every decision it drove is restated in
+[`docs/decisions.md`](docs/decisions.md), and the constraints that matter are
+called out inline where they bite.
 
 ---
 
