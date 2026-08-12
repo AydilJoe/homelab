@@ -1,0 +1,92 @@
+# INTERIM TAILNET INGRESS FOR A HOST-LEVEL TAILSCALE — dev box only.
+#
+# This is NOT the spec's §5.2 end state. Two ingress files already exist:
+#
+#   Caddyfile.lan   plain HTTP on :80              (LAN, no TLS)
+#   Caddyfile       media.<tailnet>.ts.net + tls { get_certificate tailscale }
+#                                                  (the §5.2 target, LXC only)
+#   Caddyfile.tshost  <-- this file
+#
+# WHY THIS EXISTS. §5.2 has Caddy fetch certs from tailscaled over its unix
+# socket, which requires tailscaled INSIDE the same context as Caddy. On the
+# Windows dev box tailscaled runs on the host as a Windows service; there is no
+# socket for a Linux container to mount. So instead the cert is issued ahead of
+# time with `tailscale cert` and the files are mounted in read-only, and Caddy
+# is told to use them directly.
+#
+# CONSEQUENCE — THIS DOES NOT SELF-RENEW. `tls <cert> <key>` is a static pair.
+# Tailscale/Let's Encrypt certs last 90 days. Re-run scripts/tscert-renew.sh (or
+# the tailscale cert command inside it) before expiry and restart Caddy, or
+# HTTPS stops. The §5.2 socket approach renews itself, which is one more reason
+# this file is scaffolding and not the destination.
+#
+# The node name is baked in below. It is this machine's MagicDNS name, not the
+# `media` name the LXC will register — that difference is the whole reason the
+# spec puts tailscaled in the LXC (a cert for media.<tailnet> is obtainable only
+# on a node named `media`).
+#
+# PUBLIC_BASE_URL in .env must match the https:// name here, or the addon will
+# hand Stremio stream URLs on the wrong origin and playback will mixed-content
+# block even though the manifest loaded.
+
+<host-node>.<tailnet>.ts.net {
+  tls /tscert/tsnode.crt /tscert/tsnode.key
+
+  # static media — file_server handles Range requests (206), which is what
+  # makes seeking work in the player
+  handle_path /media/* {
+    root * /srv/media
+    file_server
+  }
+
+  # admin surface is never routed through Caddy; the longer path matcher wins
+  handle /addon/admin/* {
+    respond 403
+  }
+
+  # Stremio addon — this is the URL that finally works in Stremio Web/iOS,
+  # because the origin is HTTPS with a publicly-trusted Let's Encrypt cert
+  # handle_path, NOT handle — the /addon prefix must be STRIPPED before the
+  # request reaches the addon, which serves /manifest.json at its own root.
+  # Using bare `handle` here returns 404 for every addon route.
+  handle_path /addon/* {
+    reverse_proxy addon:7000
+  }
+
+  # requires Base URL = /jellyfin in Jellyfin -> Networking
+  handle /jellyfin/* {
+    reverse_proxy jellyfin:8096
+  }
+
+  handle {
+    root * /srv/dashboard
+    file_server
+  }
+}
+
+# Keep plain HTTP working on the LAN so nothing that already works breaks:
+# Jellyfin apps on phones/TVs point at :8096 directly and are unaffected, but
+# the dashboard and /media are served here too for LAN clients that cannot
+# resolve the MagicDNS name.
+:80 {
+  handle_path /media/* {
+    root * /srv/media
+    file_server
+  }
+  handle /addon/admin/* {
+    respond 403
+  }
+  # handle_path, NOT handle — the /addon prefix must be STRIPPED before the
+  # request reaches the addon, which serves /manifest.json at its own root.
+  # Using bare `handle` here returns 404 for every addon route.
+  handle_path /addon/* {
+    reverse_proxy addon:7000
+  }
+  handle /jellyfin/* {
+    reverse_proxy jellyfin:8096
+  }
+  handle {
+    root * /srv/dashboard
+    file_server
+  }
+}

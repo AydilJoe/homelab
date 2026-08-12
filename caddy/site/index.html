@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIO JELL — Media Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e13;
+    --panel: #11151d;
+    --panel-2: #161b25;
+    --line: #232a37;
+    --ink: #d6d3c9;
+    --ink-dim: #8a8778;
+    --amber: #ffb424;
+    --amber-dim: #7a5a1a;
+    --ok: #3ddc84;
+    --err: #ff5252;
+    --wait: #5b6472;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --disp: "Bricolage Grotesque", "Arial Narrow", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+    /* faint scanlines + vignette — control-room glass */
+    background-image:
+      repeating-linear-gradient(0deg, rgba(255,255,255,.015) 0 1px, transparent 1px 3px),
+      radial-gradient(120% 90% at 50% 0%, rgba(255,180,36,.05), transparent 55%);
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px 24px;
+    border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 30px;
+    animation: rise .5s ease both;
+  }
+  h1 {
+    font-family: var(--disp); font-weight: 800; font-size: clamp(30px, 6vw, 52px);
+    letter-spacing: -.02em; line-height: .95; color: #f3f0e6;
+  }
+  h1 small { display: block; font-family: var(--mono); font-weight: 400; font-size: 12px;
+    letter-spacing: .28em; color: var(--amber); margin-top: 6px; }
+  .badge {
+    margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--amber-dim); color: var(--amber); padding: 6px 12px;
+    font-size: 11px; letter-spacing: .22em; border-radius: 2px; white-space: nowrap;
+  }
+  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--amber); animation: blink 2.4s steps(2) infinite; }
+  .hostline { width: 100%; color: var(--ink-dim); font-size: 12px; }
+  .hostline b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- section titling ---------- */
+  section { margin-bottom: 44px; animation: rise .5s ease both; }
+  section:nth-of-type(2) { animation-delay: .07s; }
+  section:nth-of-type(3) { animation-delay: .14s; }
+  section:nth-of-type(4) { animation-delay: .21s; }
+  h2 {
+    font-family: var(--disp); font-weight: 700; font-size: 13px; letter-spacing: .3em;
+    text-transform: uppercase; color: var(--ink-dim); margin-bottom: 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  h2 .n { color: var(--amber); }
+
+  /* ---------- services grid ---------- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+    padding: 14px 16px; position: relative; transition: border-color .15s, transform .15s;
+  }
+  .card:hover { border-color: var(--amber-dim); transform: translateY(-2px); }
+  .card .name { font-family: var(--disp); font-weight: 700; font-size: 17px; color: #efece2; }
+  .card .role { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .card .port { position: absolute; top: 12px; right: 14px; font-size: 11px; color: var(--ink-dim); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--wait); margin-right: 8px; vertical-align: 1px; transition: background .3s; }
+  .dot.up   { background: var(--ok);  box-shadow: 0 0 6px rgba(61,220,132,.7); }
+  .dot.down { background: var(--err); box-shadow: 0 0 6px rgba(255,82,82,.7); }
+  /* status could not be determined — deliberately not red, which would imply
+     the service is down when we simply were not allowed to ask */
+  .dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--ink-dim); }
+  .card .extra { font-size: 11px; color: var(--amber); margin-top: 8px; min-height: 14px; }
+
+  /* ---------- addon url bar ---------- */
+  .urlbar {
+    display: flex; gap: 0; border: 1px solid var(--amber-dim); border-radius: 3px;
+    overflow: hidden; background: var(--panel-2);
+  }
+  .urlbar code { flex: 1; padding: 12px 14px; font-size: 13px; color: var(--amber);
+    overflow-x: auto; white-space: nowrap; }
+  .urlbar button {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .12em; cursor: pointer;
+    background: var(--amber); color: #14100a; border: 0; padding: 0 20px; font-weight: 600;
+  }
+  .urlbar button:active { filter: brightness(.85); }
+  .hint { color: var(--ink-dim); font-size: 12px; margin-top: 8px; }
+
+  /* ---------- setup guide ---------- */
+  .meter { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .meter .bar { flex: 1; height: 10px; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 2px; overflow: hidden; }
+  .meter .fill { height: 100%; width: 0%;
+    background: repeating-linear-gradient(90deg, var(--amber) 0 6px, #d89416 6px 12px);
+    transition: width .35s ease; }
+  .meter .pct { font-size: 12px; color: var(--amber); min-width: 8ch; text-align: right; }
+
+  details.step {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+    margin-bottom: 8px; overflow: hidden;
+  }
+  details.step[open] { border-color: #2e3140; }
+  details.step.done summary .stepname { color: var(--ink-dim); text-decoration: line-through; }
+  details.step.done summary .num { background: var(--ok); color: #06130c; }
+  summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 14px;
+    padding: 13px 16px; user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .num {
+    font-size: 12px; font-weight: 600; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--amber); width: 26px; height: 26px; display: inline-flex; align-items: center;
+    justify-content: center; border-radius: 2px; flex-shrink: 0; transition: background .2s;
+  }
+  summary .stepname { font-family: var(--disp); font-weight: 600; font-size: 15px; }
+  summary .where { margin-left: auto; font-size: 11px; color: var(--ink-dim); white-space: nowrap; }
+  .steps { padding: 4px 16px 14px 56px; border-top: 1px solid var(--line); }
+  .steps label { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; cursor: pointer;
+    color: var(--ink); }
+  .steps label:hover { color: #fff; }
+  .steps input[type=checkbox] {
+    appearance: none; width: 14px; height: 14px; border: 1px solid var(--ink-dim);
+    border-radius: 2px; cursor: pointer; position: relative; top: 2px; flex-shrink: 0;
+    transition: background .15s, border-color .15s;
+  }
+  .steps input[type=checkbox]:checked { background: var(--amber); border-color: var(--amber); }
+  .steps input[type=checkbox]:checked + span { color: var(--ink-dim); text-decoration: line-through; }
+  .steps code, .steps kbd {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 2px;
+    padding: 1px 6px; font-size: 12px; color: var(--amber);
+  }
+  .note { border-left: 2px solid var(--amber); background: var(--panel-2);
+    padding: 10px 14px; font-size: 12px; color: var(--ink-dim); margin: 8px 0; }
+  .note b { color: var(--amber); font-weight: 600; }
+
+  /* ---------- devices ---------- */
+  .tscroll { overflow-x: auto; }
+  table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--disp); font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--ink-dim); font-weight: 700; }
+  td:first-child { color: #efece2; }
+  td code { color: var(--amber); font-size: 12px; }
+  .no { color: var(--err); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 16px; font-size: 11px;
+    color: var(--ink-dim); display: flex; flex-wrap: wrap; gap: 6px 24px; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
+  @keyframes blink { 50% { opacity: .25; } }
+  @media (max-width: 640px) {
+    summary .where { display: none; }
+    .steps { padding-left: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>AIO&nbsp;JELL<small>MEDIA · MASTER CONTROL</small></h1>
+    <span class="badge" id="modeBadge">LAN MODE</span>
+    <div class="hostline">server <b id="hostShow">…</b> · <span id="hostline-extra">…</span></div>
+  </header>
+
+  <section id="services">
+    <h2><span class="n">01</span> Services</h2>
+    <div class="grid" id="serviceGrid"></div>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span> Stremio addon</h2>
+    <div class="urlbar">
+      <code id="addonUrl">…</code>
+      <button id="copyBtn" type="button">COPY</button>
+    </div>
+    <p class="hint" id="addonHint">…</p>
+  </section>
+
+  <section>
+    <h2><span class="n">03</span> Using it</h2>
+    <p class="hint" style="margin-bottom:14px">The stack is built and wired. These are the
+    things a person actually does — the operator checklist is further down.</p>
+    <div class="meter">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="pct" id="pct">0 / 0</div>
+    </div>
+
+    <details class="step" open data-step="watch">
+      <summary><span class="num">1</span><span class="stepname">Watch something</span><span class="where">any device</span></summary>
+      <div class="steps">
+        <label><input type="checkbox" data-k="u-app"><span>Phone / tablet / TV: install the <b>Jellyfin</b> app → server <code id="jfUrl1">…</code> → sign in</span></label>
+        <label><input type="checkbox" data-k="u-web"><span>Laptop: just open <code id="jfUrl2">…</code> in a browser</span></label>
+        <label><input type="checkbox" data-k="u-ts"><span>Away from home? Install <b>Tailscale</b> on the device and sign in — the same address then works anywhere</span></label>
+        <div class="note">Every person gets their own login, so watch history, resume points
+        and Continue Watching stay separate.</div>
+      </div>
+    </details>
+
+    <details class="step" data-step="request">
+      <summary><span class="num">2</span><span class="stepname">Request something new</span><span class="where">:5055</span></summary>
+      <div class="steps">
+        <label><input type="checkbox" data-k="u-seerr"><span>Open <b>Seerr</b> (card above) and sign in with your <b>Jellyfin</b> account</span></label>
+        <label><input type="checkbox" data-k="u-search"><span>Search a title → <b>Available</b> means it is already here; otherwise hit <b>Request</b></span></label>
+        <label><input type="checkbox" data-k="u-wait"><span>Radarr/Sonarr take it from there. It appears in Jellyfin when the download finishes</span></label>
+        <div class="note">Nothing plays instantly — a request has to download first. That is
+        normal, not a fault.</div>
+      </div>
+    </details>
+
+    <details class="step" data-step="household">
+      <summary><span class="num">3</span><span class="stepname">Add someone to the household</span><span class="where">operator</span></summary>
+      <div class="steps">
+        <label><input type="checkbox" data-k="h-ts"><span>Tailscale admin console → Machines → <code>media</code> → <b>Share</b>, or Users → Invite. Sharing the one node keeps the rest of your devices private</span></label>
+        <label><input type="checkbox" data-k="h-jf"><span>Jellyfin → Dashboard → Users → add their account (libraries and parental controls are per user)</span></label>
+        <label><input type="checkbox" data-k="h-seerr"><span>Seerr → Settings → Users → import from Jellyfin, and decide whether their requests need your approval</span></label>
+      </div>
+    </details>
+
+    <details class="step" data-step="stremio">
+      <summary><span class="num">4</span><span class="stepname">Stremio addon</span><span class="where">optional</span></summary>
+      <div class="steps">
+        <label><input type="checkbox" data-k="st-install"><span>Stremio → Addons → paste the URL from section 02 → Install</span></label>
+        <label><input type="checkbox" data-k="st-check"><span>“Local Films / Local Series” appear, and your files show a <b>Local</b> stream</span></label>
+        <div class="note">Per install, not per user — there is no shared account. Jellyfin is
+        the multi-user path; this is a convenience for one device.</div>
+      </div>
+    </details>
+
+    <details class="step" data-step="ops">
+      <summary><span class="num">5</span><span class="stepname">Operator — still to do</span><span class="where">owner</span></summary>
+      <div class="steps">
+        <label><input type="checkbox" data-k="op-autostart"><span><b>Docker Desktop → Settings → General → “Start Docker Desktop when you sign in”</b> — currently off, so nothing comes back on its own after a reboot</span></label>
+        <label><input type="checkbox" data-k="op-dhcp"><span>Give this PC a DHCP reservation in the router so its LAN address never moves</span></label>
+        <label><input type="checkbox" data-k="op-scan"><span>Jellyfin → Scheduled Tasks → confirm <b>Scan Media Library</b> runs on a schedule (a brand-new show folder is not always caught by the watcher)</span></label>
+        <label><input type="checkbox" data-k="op-telegram"><span>Optional: Telegram bot for “it’s ready” alerts — needs a bot token from @BotFather and your chat ID</span></label>
+        <label><input type="checkbox" data-k="op-4k"><span>Optional: 4K requests need a second Radarr/Sonarr entry flagged <b>4K Server</b>. Deferred until the Veriton — no hardware transcoding here yet</span></label>
+        <div class="note">Everything else — Jellyfin, qBittorrent, Radarr, Sonarr, Prowlarr,
+        Bazarr, Seerr, the addon, TLS and the tailnet — is configured and verified.</div>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2><span class="n">04</span> Device access</h2>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Device</th><th>App</th><th>Address</th><th>Multi-user login</th></tr></thead>
+      <tbody id="deviceTable"></tbody>
+    </table>
+    </div>
+    <p class="hint" id="deviceNote">…</p>
+    <p class="hint"><span class="no">Never</span> port-forward these UIs to the internet (spec C3).</p>
+  </section>
+
+  <footer>
+    <span>AIO JELL homelab · spec v2.1 · LAN phase</span>
+    <span>repo: <code>homelab/</code> · runbook: <code>docs/runbook.md</code></span>
+    <span id="checkTime"></span>
+  </footer>
+</div>
+
+<script>
+  const host = location.hostname;
+  const proto = location.protocol;                 // "http:" or "https:"
+  const onTailnet = host.endsWith(".ts.net");
+  const secure = proto === "https:";
+  const $ = (s, el=document) => el.querySelector(s);
+
+  // Every service is reached through Caddy on THIS origin — same host, same
+  // scheme, one certificate. Nothing here points at a second hostname or a
+  // direct port, which is what makes the page correct whether it is loaded
+  // over the tailnet or on the LAN, and what will keep it correct on LXC 101.
+  //
+  // Each path requires the app's own URL base to match (manual-config 19);
+  // qBittorrent is the exception — it has no such setting, so Caddy strips its
+  // prefix and rewrites Origin/Referer instead.
+  const svc = (path) => `${proto}//${host}${path}`;
+
+  // ---------- dynamic addresses ----------
+  // Browsers use the proxied path. The native Jellyfin apps want a bare
+  // host[:port] and handle the base path themselves, so they get the same
+  // origin without a trailing path.
+  const jfProxy = svc("/jellyfin/");
+  const jfAddr  = `${proto}//${host}`;
+  $("#hostShow").textContent = host;
+  // Must follow the page's own scheme: an http:// addon URL pasted into a
+  // Stremio client running on HTTPS is refused as mixed content.
+  $("#addonUrl").textContent = `${proto}//${host}/addon/manifest.json`;
+  // Native apps take a bare host; the browser link uses the proxied path.
+  $("#jfUrl1").textContent = jfAddr;
+  $("#jfUrl2").textContent = jfProxy;
+
+  // ---------- mode badge + addon hint ----------
+  const badge = $("#modeBadge");
+  badge.textContent = onTailnet ? "TAILNET · TLS" : "LAN MODE";
+  $("#hostline-extra").textContent = onTailnet
+    ? "reachable from anywhere on your tailnet"
+    : "all services on this network only · nothing public";
+  $("#addonHint").innerHTML = secure
+    ? `Paste into <b>Stremio</b> on any device — desktop, phone or web. This URL is
+       HTTPS on your tailnet, so the mobile and web clients accept it.`
+    : `Paste into <b>Stremio Desktop</b> → Addons → search box. Phone / web Stremio
+       refuse plain-HTTP addons — use the tailnet HTTPS address for those.`;
+
+  // ---------- services ----------
+  // `probe` is a path that answers without a login, so the status dot reflects
+  // "is the service up" rather than "am I signed in". The *arr apps expose
+  // /ping; Jellyfin /health. Bazarr and qBittorrent have no unauthenticated
+  // endpoint, so they are probed at their root and a redirect still counts as
+  // alive — see ping().
+  const services = [
+    { name: "Jellyfin",    role: "watch — every device",   path: "/jellyfin/",    probe: "/jellyfin/health" },
+    { name: "qBittorrent", role: "downloads",              path: "/qbittorrent/", probe: "/qbittorrent/" },
+    { name: "Radarr",      role: "movies — request here",  path: "/radarr/",      probe: "/radarr/ping" },
+    { name: "Sonarr",      role: "tv — request here",      path: "/sonarr/",      probe: "/sonarr/ping" },
+    { name: "Prowlarr",    role: "indexer manager",        path: "/prowlarr/",    probe: "/prowlarr/ping" },
+    { name: "Bazarr",      role: "subtitles (automatic)",  path: "/bazarr/",      probe: "/bazarr/" },
+    { name: "Local addon", role: "stremio catalog",        path: "/addon/manifest.json", probe: "/addon/health", count: true },
+    // Own port, not a path — Seerr inherits Overseerr's lack of subpath
+    // support. Same host and certificate, so still one origin in practice.
+    // Tailnet only: the port is TLS, so a LAN-HTTP page cannot probe it.
+    // (Container is still named `jellyseerr`; the project renamed to Seerr.)
+    { name: "Seerr",       role: "search & request",       path: null, port: 5055 },
+  ];
+  const grid = $("#serviceGrid");
+  for (const s of services) {
+    const a = document.createElement("a");
+    a.className = "card";
+    // Seerr is the one service on its own port; everything else is a path
+    // on this origin. Its port is TLS-only, so always link it as https.
+    a.href = s.port ? `https://${host}:${s.port}/` : s.path;
+    a.target = "_blank"; a.rel = "noopener";
+    a.innerHTML = `<span class="port">${s.port ? ":" + s.port : (s.path.replace(/\/$/, "") || "/")}</span>
+      <div class="name"><span class="dot" id="dot-${s.name}"></span>${s.name}</div>
+      <div class="role">${s.role}</div><div class="extra" id="extra-${s.name}"></div>`;
+    grid.appendChild(a);
+  }
+  // Setup-guide "where" labels: same origin, path per app.
+  const WHERE = { "8096": "/jellyfin", "8080": "/qbittorrent", "7878": "/radarr",
+                  "8989": "/sonarr", "9696": "/prowlarr", "6767": "/bazarr" };
+  document.querySelectorAll(".where[data-port]").forEach(el =>
+    el.textContent = `${host}${WHERE[el.dataset.port] || ""}`);
+
+  // Everything is same-origin now, so every service is genuinely checkable in
+  // both modes — no mixed content, no opaque no-cors guessing.
+  async function ping(s) {
+    const dot = $(`#dot-${CSS.escape(s.name)}`);
+    // Cross-origin port (Seerr). It is TLS-only, so from a plain-HTTP LAN
+    // page the browser blocks the probe as mixed content — that means "cannot
+    // check", not "down", and red would be a lie. The link still works.
+    if (s.port) {
+      if (!secure) {
+        dot.className = "dot unknown";
+        dot.title = "on its own TLS port — open this page over the tailnet to see its status";
+        return;
+      }
+      try {
+        await fetch(`https://${host}:${s.port}/`, { mode: "no-cors", cache: "no-store" });
+        dot.className = "dot up"; dot.title = "responding";
+      } catch { dot.className = "dot down"; dot.title = "not responding"; }
+      return;
+    }
+    try {
+      const r = await fetch(s.probe, { cache: "no-store", redirect: "follow" });
+      // A login redirect or a 401 still proves the service answered. Only a
+      // network-level failure or a 5xx means it is actually down.
+      if (r.status >= 500) throw new Error(String(r.status));
+      dot.className = "dot up"; dot.title = `responding (${r.status})`;
+      if (s.count) {
+        const j = await r.clone().json();
+        $(`#extra-${CSS.escape(s.name)}`).textContent =
+          `${j.count} item${j.count === 1 ? "" : "s"} indexed`;
+      }
+    } catch {
+      dot.className = "dot down"; dot.title = "not responding";
+    }
+  }
+  function sweep() {
+    services.forEach(ping);
+    $("#checkTime").textContent = `status checked ${new Date().toLocaleTimeString()}`;
+  }
+  sweep();
+  setInterval(sweep, 30000);
+
+  // ---------- copy button ----------
+  $("#copyBtn").addEventListener("click", async () => {
+    const btn = $("#copyBtn");
+    try { await navigator.clipboard.writeText($("#addonUrl").textContent); }
+    catch { /* http page on some browsers: fall back to selection */
+      const r = document.createRange(); r.selectNode($("#addonUrl"));
+      getSelection().removeAllRanges(); getSelection().addRange(r); document.execCommand("copy");
+    }
+    btn.textContent = "COPIED"; setTimeout(() => btn.textContent = "COPY", 1400);
+  });
+
+  // ---------- checklist persistence ----------
+  const KEY = "aiojell-setup-v1";
+  const state = JSON.parse(localStorage.getItem(KEY) || "{}");
+  const boxes = [...document.querySelectorAll(".steps input[type=checkbox]")];
+  function refresh() {
+    const done = boxes.filter(b => b.checked).length;
+    $("#fill").style.width = (100 * done / boxes.length) + "%";
+    $("#pct").textContent = `${done} / ${boxes.length}`;
+    document.querySelectorAll("details.step").forEach(d => {
+      const bs = [...d.querySelectorAll("input[type=checkbox]")];
+      d.classList.toggle("done", bs.length > 0 && bs.every(b => b.checked));
+    });
+  }
+  for (const b of boxes) {
+    b.checked = !!state[b.dataset.k];
+    b.addEventListener("change", () => {
+      state[b.dataset.k] = b.checked;
+      localStorage.setItem(KEY, JSON.stringify(state));
+      refresh();
+    });
+  }
+  refresh();
+
+  // ---------- device table ----------
+  const addonUrl = `${proto}//${host}/addon/manifest.json`;
+  $("#deviceTable").innerHTML = [
+    ["Phone / tablet", "Jellyfin app", `<code>${jfAddr}</code>`, "yes — own account"],
+    ["TV (Android/Fire/Samsung/LG)", "Jellyfin app", `<code>${jfAddr}</code>`, "yes — own account"],
+    ["Laptop / desktop", "any browser", `<code>${jfProxy}</code>`, "yes — own account"],
+    ["Stremio Desktop", "Local addon", `<code>${addonUrl}</code>`, "no — per install"],
+    ["Stremio mobile / web", "Local addon", secure
+      ? `<code>${addonUrl}</code>`
+      : `<span class="no">needs the tailnet HTTPS address</span>`, "no — per install"],
+  ].map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("");
+
+  $("#deviceNote").innerHTML = onTailnet
+    ? `Everything above is one origin — <code>${host}</code> — over TLS, so it
+       works from anywhere a device is signed in to Tailscale. In the Jellyfin
+       app enter <code>${jfAddr}</code>; it finds the rest itself.`
+    : `These work on your home network only. For access from outside, load this
+       page at the tailnet address instead.`;
+</script>
+</body>
+</html>

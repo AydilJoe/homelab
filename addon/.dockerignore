@@ -1,0 +1,11 @@
+node_modules
+dist
+test
+coverage
+.git
+.gitignore
+*.log
+*.db
+*.db-wal
+*.db-shm
+README.md

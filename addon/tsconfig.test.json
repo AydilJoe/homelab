@@ -1,0 +1,12 @@
+{
+  // `tsconfig.json` scopes the emit to src/ so dist/ mirrors it exactly. Tests
+  // are therefore type-checked by nothing — vitest transpiles them with esbuild,
+  // which strips types without checking them. This config closes that gap and is
+  // what `npm run typecheck` uses; it never emits.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

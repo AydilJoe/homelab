@@ -1,0 +1,68 @@
+# Nightly configuration backup — spec §8, gated by §7 Phase 7.
+#
+# Installed INSIDE LXC 101, not on the Proxmox host: /srv/config lives in the
+# container, so a host-side timer would archive nothing and still report
+# success. (vzdump of the container itself is the separate weekly HOST job.)
+#
+# The repo is checked out at /opt/homelab on the LXC. If you put it somewhere
+# else, change ExecStart here and the WorkingDirectory below — that path is the
+# only assumption these units make.
+#
+# Install:
+#   chmod +x /opt/homelab/scripts/*.sh
+#   cp /opt/homelab/systemd/homelab-backup.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now homelab-backup.timer
+#   systemctl start homelab-backup.service     # one manual run to prove it
+#   journalctl -u homelab-backup -n 50
+#
+# Overrides go in /etc/default/homelab-backup (KEY=VALUE, no export), e.g.
+#   RETENTION=30
+#   BACKUP_COMPRESSION=gzip
+#   BACKUP_EXTRA_EXCLUDES=config/jellyfin/cache/* config/jellyfin/log/*
+
+[Unit]
+Description=Homelab nightly config backup (/srv/config -> /srv/data/backups)
+Documentation=file:///opt/homelab/docs/runbook.md
+# Not a hard dependency: the backup reads files on disk and does not need the
+# containers to be running. After= only orders it if docker happens to be here.
+After=docker.service local-fs.target
+ConditionPathIsDirectory=/srv/config
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab
+
+# Defaults first, then the optional override file (later wins).
+Environment=CONFIG_ROOT=/srv/config
+Environment=BACKUP_DIR=/srv/data/backups
+Environment=RETENTION=14
+Environment=BACKUP_COMPRESSION=auto
+EnvironmentFile=-/etc/default/homelab-backup
+
+ExecStart=/opt/homelab/scripts/backup.sh
+
+# A backup that has not finished in an hour is stuck, not slow.
+TimeoutStartSec=3600
+
+# Stay out of the way of playback and imports.
+Nice=10
+IOSchedulingClass=idle
+
+# Modest hardening. /srv must stay writable (that is the whole job), and
+# PrivateTmp is fine — the script stages under $BACKUP_DIR, not /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# Failures must be loud: they land in the journal and in `systemctl status`.
+StandardOutput=journal
+StandardError=journal
+
+# No [Install] section on purpose. This unit is started by
+# homelab-backup.timer; enabling it directly would make it run at every boot.
+# `systemctl start homelab-backup.service` still works for an ad-hoc run.

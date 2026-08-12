@@ -1,0 +1,19 @@
+# This repo is authored on Windows and deployed to a Linux LXC. Everything the
+# container or systemd reads must be LF — a CRLF shebang line makes a script
+# fail with a bare "not found", and CRLF in a unit file breaks ExecStart.
+
+* text=auto eol=lf
+
+*.sh        text eol=lf
+Caddyfile*  text eol=lf
+Dockerfile* text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.ts        text eol=lf
+*.sql       text eol=lf
+*.md        text eol=lf
+
+# systemd units (§10: systemd/homelab-backup.{service,timer})
+*.service   text eol=lf
+*.timer     text eol=lf

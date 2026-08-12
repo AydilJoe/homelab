@@ -1,0 +1,63 @@
+# Addon index reconciliation — spec open item O4.
+#
+# Installed INSIDE LXC 101, same as homelab-backup.*. The addon's admin port is
+# loopback-bound (127.0.0.1:7000, §4/§6.5), so this must run on the host side of
+# that binding — i.e. in the LXC, not on the Proxmox host and not through Caddy,
+# which answers /addon/admin/* with 403 by design.
+#
+# Install:
+#   chmod +x /opt/homelab/scripts/rescan.sh
+#   cp /opt/homelab/systemd/homelab-rescan.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now homelab-rescan.timer
+#   systemctl start homelab-rescan.service      # one manual run to prove it
+#   journalctl -u homelab-rescan -n 20
+#
+# Overrides go in /etc/default/homelab-rescan (KEY=VALUE, no export), e.g.
+#   ADDON_URL=http://127.0.0.1:7000
+#   ADDON_ADMIN_TOKEN=...        # otherwise read from /opt/homelab/.env
+#   RESCAN_SETTLE=10
+
+[Unit]
+Description=Reconcile Stremio addon index with the media library (O4)
+Documentation=file:///opt/homelab/docs/runbook.md
+# The addon is a container; without docker there is nothing to talk to. After=
+# only orders us behind it — the script's own health check is the real guard.
+After=docker.service
+ConditionPathExists=/opt/homelab/scripts/rescan.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab
+
+Environment=ADDON_URL=http://127.0.0.1:7000
+Environment=ENV_FILE=/opt/homelab/.env
+Environment=RESCAN_TIMEOUT=30
+EnvironmentFile=-/etc/default/homelab-rescan
+
+ExecStart=/opt/homelab/scripts/rescan.sh
+
+# The POST returns 202 in milliseconds; anything past a minute is wedged.
+TimeoutStartSec=120
+
+# Never compete with playback or an import.
+Nice=10
+IOSchedulingClass=idle
+
+# Tighter than the backup unit: this one only makes an HTTP call, so it needs
+# no write access anywhere. It does read .env for the token, hence ProtectHome
+# rather than anything stricter about /opt.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+StandardOutput=journal
+StandardError=journal
+
+# No [Install] section — started by homelab-rescan.timer. Enabling this unit
+# directly would fire it once at boot and never again.

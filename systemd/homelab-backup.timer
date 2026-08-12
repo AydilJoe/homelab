@@ -1,0 +1,33 @@
+# Nightly trigger for homelab-backup.service — spec §8, §7 Phase 7.
+# Installed INSIDE LXC 101 (that is where /srv/config lives).
+#
+#   cp homelab-backup.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now homelab-backup.timer
+#   systemctl list-timers homelab-backup.timer     # next elapse
+#
+# Phase 7 gate: `systemctl status homelab-backup.timer` plus at least one
+# archive in /srv/data/backups. `scripts/verify.sh 7` checks both.
+
+[Unit]
+Description=Nightly homelab config backup
+Documentation=file:///opt/homelab/docs/runbook.md
+
+[Timer]
+# 03:30 local time — after any evening playback, before the morning. TZ comes
+# from the container's own timezone (Asia/Kuala_Lumpur per .env), not UTC.
+OnCalendar=*-*-* 03:30:00
+
+# Spread the start a little so the backup never collides with an *arr's own
+# 03:30 housekeeping task.
+RandomizedDelaySec=15m
+AccuracySec=1m
+
+# The box is not on 24/7 and a smart plug can cut it (§5.3): if the machine was
+# off at 03:30, run the backup once shortly after it comes back rather than
+# skipping the night entirely.
+Persistent=true
+
+Unit=homelab-backup.service
+
+[Install]
+WantedBy=timers.target

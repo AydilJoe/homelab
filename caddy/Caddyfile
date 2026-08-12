@@ -1,0 +1,163 @@
+# TAILNET INGRESS (spec §5.2) — the end state, not the current default.
+#
+# Activate by setting CADDYFILE=./caddy/Caddyfile in .env and uncommenting the
+# tailscaled socket mount in docker-compose.yml. Requires Phase 2 complete:
+# tailscaled up inside LXC 101 as node `media`, MagicDNS on, HTTPS certificates
+# enabled in the tailnet admin console.
+#
+# The site address is built from {$TAILNET}, which compose passes in from .env
+# (e.g. TAILNET=tail1a2b3c). Nothing here is host-specific, so this file is
+# committed as-is and works on any tailnet.
+# A cert for media.<tailnet>.ts.net is only obtainable on a node actually named
+# `media` — that is why tailscaled runs in the LXC and not on the host.
+#
+# Public addon manifest URL: https://media.<tailnet>.ts.net/addon/manifest.json
+
+media.{$TAILNET}.ts.net {
+  # §5.2 prints this as `tls { get_certificate tailscale }` on one line. The
+  # Caddyfile parser rejects that — a `{` must be the last token on its line
+  # ("Unexpected next token after '{' on same line"), so the block is expanded
+  # here. Same directive, same behaviour, and it actually adapts.
+  # `scripts/verify.sh 2` runs `caddy validate` on both files to keep it that way.
+  tls {
+    get_certificate tailscale
+  }
+
+  # static media files — file_server handles Range requests
+  handle_path /media/* {
+    root * /srv/media
+    file_server
+  }
+
+  # the admin surface is never routed through Caddy — the longer path
+  # matcher wins over /addon/*
+  handle /addon/admin/* {
+    respond 403
+  }
+
+  # Stremio addon
+  handle_path /addon/* {
+    reverse_proxy addon:7000
+  }
+
+  # ---- management UIs, each at its own path ------------------------------
+  #
+  # `handle`, NOT `handle_path`: the prefix must survive, because each app is
+  # configured with a matching URL base and builds its own asset links from it.
+  # Stripping the prefix would make every app return its HTML and then 404 all
+  # its own scripts.
+  #
+  # Each of these REQUIRES the app's URL base to be set (manual-config 19):
+  #   Jellyfin  Dashboard - Networking - Base URL   = /jellyfin
+  #   Radarr    Settings - General - URL Base       = /radarr
+  #   Sonarr    Settings - General - URL Base       = /sonarr
+  #   Prowlarr  Settings - General - URL Base       = /prowlarr
+  #   Bazarr    Settings - General - Base URL       = /bazarr
+  # Without it the path 404s. qBittorrent has no URL-base setting at all, so it
+  # is the one exception below.
+  handle /jellyfin/* {
+    reverse_proxy jellyfin:8096
+  }
+  handle /radarr/* {
+    reverse_proxy radarr:7878
+  }
+  handle /sonarr/* {
+    reverse_proxy sonarr:8989
+  }
+  handle /prowlarr/* {
+    reverse_proxy prowlarr:9696
+  }
+  handle /bazarr/* {
+    reverse_proxy bazarr:6767
+  }
+
+  # qBittorrent has no URL-base setting, so the prefix IS stripped here and the
+  # Referer/Origin are rewritten to what qBittorrent expects — it rejects
+  # requests whose Origin does not match its own host, which is how its CSRF
+  # protection works.
+  handle_path /qbittorrent/* {
+    reverse_proxy qbittorrent:8080 {
+      header_up Host {upstream_hostport}
+      header_up Referer http://{upstream_hostport}
+      header_up Origin http://{upstream_hostport}
+    }
+  }
+
+  # dashboard — served for everything no other route claims. A matcher-less
+  # handle is the least specific, so it always loses to the routes above.
+  handle {
+    root * /srv/dashboard
+    file_server
+  }
+}
+
+# Jellyseerr on its own TLS port. Same hostname, same Tailscale certificate,
+# so it is reached at https://media.<tailnet>.ts.net:5055 with no warning.
+#
+# WHY A PORT AND NOT A PATH. Jellyseerr (like Overseerr, which it forks) has no
+# base-path setting: it builds absolute URLs from the site root, so behind
+# /jellyseerr/* the HTML loads and every script, stylesheet and API call 404s.
+# A dedicated port sidesteps that entirely. If upstream ever adds subpath
+# support, this collapses into a `handle /jellyseerr/*` beside the others.
+# TAILNET ONLY — deliberately. Caddy cannot serve TLS and plain HTTP on the
+# same port, and a bare `:5055` block alongside this one makes every plain-HTTP
+# request answer "Client sent an HTTP request to an HTTPS server". Rather than
+# invent yet another port for LAN clients, Jellyseerr is reached over the
+# tailnet like everything else — devices already need Tailscale for access away
+# from home, and on the LAN it routes directly over the local network anyway.
+media.{$TAILNET}.ts.net:5055 {
+  tls {
+    get_certificate tailscale
+  }
+  reverse_proxy jellyseerr:5055
+}
+
+# Plain HTTP on :80 for LAN clients — a deliberate addition to §5.2, which
+# defines only the tailnet site.
+#
+# WITHOUT this block Caddy's automatic HTTPS installs a redirect on :80, so
+# http://<lan-ip>/ answers 308 -> https://<lan-ip>/ — an address the tailnet
+# certificate does not cover. Any device that is not on the tailnet then gets a
+# certificate error instead of the dashboard. Observed and fixed 2026-08-12.
+#
+# Serving these routes over LAN HTTP costs nothing in exposure: /addon/admin/*
+# is refused here too, and the addon's own port stays loopback-bound. Jellyfin
+# clients on phones and TVs talk to :8096 directly and never touch this block.
+:80 {
+  handle_path /media/* {
+    root * /srv/media
+    file_server
+  }
+  handle /addon/admin/* {
+    respond 403
+  }
+  handle_path /addon/* {
+    reverse_proxy addon:7000
+  }
+  handle /jellyfin/* {
+    reverse_proxy jellyfin:8096
+  }
+  handle /radarr/* {
+    reverse_proxy radarr:7878
+  }
+  handle /sonarr/* {
+    reverse_proxy sonarr:8989
+  }
+  handle /prowlarr/* {
+    reverse_proxy prowlarr:9696
+  }
+  handle /bazarr/* {
+    reverse_proxy bazarr:6767
+  }
+  handle_path /qbittorrent/* {
+    reverse_proxy qbittorrent:8080 {
+      header_up Host {upstream_hostport}
+      header_up Referer http://{upstream_hostport}
+      header_up Origin http://{upstream_hostport}
+    }
+  }
+  handle {
+    root * /srv/dashboard
+    file_server
+  }
+}

@@ -1,0 +1,43 @@
+# Periodic trigger for homelab-rescan.service — spec open item O4.
+#
+#   cp homelab-rescan.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now homelab-rescan.timer
+#   systemctl list-timers homelab-rescan.timer
+#
+# Why a timer at all: Jellyfin watches the filesystem and self-heals within
+# ~2 minutes. The addon does not — it indexes at startup and on demand only, so
+# without this a deleted file leaves a stream URL pointing at nothing and a
+# manually-dropped file stays invisible. Fifteen minutes is the compromise
+# between "stale enough to notice" and "pointless churn"; the rebuild itself is
+# a single transaction measured in tens of milliseconds.
+#
+# A webhook from Radarr/Sonarr (Settings -> Connect) would be instant and is
+# strictly better for imports — but it fires only on *arr events, so it misses
+# files added or deleted by hand. Run both if you want instant plus complete;
+# the rescan is idempotent, so overlapping triggers are harmless.
+
+[Unit]
+Description=Reconcile addon index every 15 minutes
+Documentation=file:///opt/homelab/docs/runbook.md
+
+[Timer]
+# First run shortly after boot, so a restart converges without waiting a
+# quarter of an hour. The addon already indexes on its own startup; this covers
+# the case where it started before the media mount was ready.
+OnBootSec=3min
+OnUnitActiveSec=15min
+
+# Nothing downstream cares about the exact second — let systemd batch this with
+# other timers to keep the box idle-friendly (§1: 25-35 W target).
+AccuracySec=1m
+RandomizedDelaySec=30s
+
+# Deliberately NOT Persistent=true. Unlike the nightly backup, a missed rescan
+# has no value after the fact — the next run 15 minutes later does the same
+# job. Persisting would only cause a redundant burst at every boot.
+Persistent=false
+
+Unit=homelab-rescan.service
+
+[Install]
+WantedBy=timers.target

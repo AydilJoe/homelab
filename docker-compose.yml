@@ -1,0 +1,280 @@
+# Homelab media stack — runs inside LXC 101 (Proxmox, unprivileged).
+# Authoritative spec: ../homelab-build-spec.md  (§3.2 mounts, §4 services, §5 ingress)
+#
+# INGRESS MODE is one line in .env:
+#   LAN (default)   CADDYFILE=./caddy/Caddyfile.lan   plain HTTP on :80
+#   Tailnet (§5.2)  CADDYFILE=./caddy/Caddyfile       TLS issued by tailscaled
+# Nothing here requires a tailnet in LAN mode.
+#
+# HARDLINK CONTRACT (§3.2, C4) — non-negotiable:
+# qbittorrent, sonarr, radarr and bazarr each mount ${DATA_ROOT} at /data.
+# One mount, one filesystem, identical paths in every container that writes.
+# Do not "tidy" these into per-service subpath mounts — imports would copy
+# instead of hardlink and silently double storage use. Phase 4 gate (§7) is
+# `stat -c '%h %n' ...` and it must report 2, not 1.
+#
+# Read-only consumers are outside the contract and mount only what they need:
+# Jellyfin /media:ro, addon /data/media:ro, Caddy /srv/media:ro.
+
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent
+    container_name: qbittorrent
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      WEBUI_PORT: 8080
+    ports:
+      - "8080:8080"       # Web UI — published so LAN devices can reach it
+      - "6881:6881/tcp"   # peer port — the sole router forward (§5.1)
+      - "6881:6881/udp"
+    volumes:
+      - ${CONFIG_ROOT}/qbittorrent:/config
+      - ${DATA_ROOT}:/data          # hardlink contract (§3.2)
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr
+    container_name: prowlarr
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    ports:
+      - "9696:9696"
+    volumes:
+      - ${CONFIG_ROOT}/prowlarr:/config
+    # Ships empty and stays empty. Indexer selection is an operator decision
+    # made by hand during Phase 3, never by the build (§13).
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr
+    container_name: sonarr
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    ports:
+      - "8989:8989"
+    volumes:
+      - ${CONFIG_ROOT}/sonarr:/config
+      - ${DATA_ROOT}:/data          # hardlink contract (§3.2)
+
+  radarr:
+    image: lscr.io/linuxserver/radarr
+    container_name: radarr
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    ports:
+      - "7878:7878"
+    volumes:
+      - ${CONFIG_ROOT}/radarr:/config
+      - ${DATA_ROOT}:/data          # hardlink contract (§3.2)
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr
+    container_name: bazarr
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    ports:
+      - "6767:6767"
+    volumes:
+      - ${CONFIG_ROOT}/bazarr:/config
+      - ${DATA_ROOT}:/data          # hardlink contract (§3.2)
+    # SRT sidecars, not embedded — Stremio does not render PGS (§9).
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin
+    container_name: jellyfin
+    restart: unless-stopped
+    networks: [medianet]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    group_add: ["104", "44"]        # render, video — must match the gids set in
+                                    # 101.conf (§2); verify with getent in the LXC
+                                    # (`getent group render video` INSIDE the
+                                    # container/LXC, not on the Proxmox host)
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "8096:8096"
+    volumes:
+      - ${CONFIG_ROOT}/jellyfin:/config
+      - ${DATA_ROOT}/media:/media:ro
+    # Base URL must be set to /jellyfin in Jellyfin → Networking for the Caddy
+    # route to work; record it in docs/manual-config.md (§5.2).
+
+  addon:
+    build: ./addon
+    container_name: addon
+    restart: unless-stopped
+    networks: [medianet]
+    ports: ["127.0.0.1:7000:7000"]  # loopback ONLY — tailscaled lives in this
+                                    # LXC, so a 0.0.0.0 binding would expose
+                                    # /admin tailnet-wide (§6.5)
+    mem_limit: 256m                 # N6
+    environment:
+      # MUST include each app's URL base. Those were added so Caddy could serve
+      # every UI from one origin (manual-config 19); without them here the
+      # addon's primary resolution path dies with "fetch failed" and silently
+      # falls back to Cinemeta for everything.
+      RADARR_URL: http://radarr:7878/radarr
+      SONARR_URL: http://sonarr:8989/sonarr
+      RADARR_API_KEY: ${RADARR_API_KEY}
+      SONARR_API_KEY: ${SONARR_API_KEY}
+      ADDON_ADMIN_TOKEN: ${ADDON_ADMIN_TOKEN}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      # LAN mode:     http://<lxc-lan-ip>
+      # Tailnet mode: https://media.${TAILNET}.ts.net   (§5.2)
+      # This value is baked into every stream URL the addon returns, so it
+      # must be reachable from the Stremio client, not from the container.
+    volumes:
+      - ${CONFIG_ROOT}/addon:/config
+      - ${DATA_ROOT}/media:/data/media:ro
+
+  # Request UI: search everything, see what is already in the library, request
+  # the rest. Uses Jellyfin accounts, so household members sign in with the
+  # credentials they already have and never touch Radarr/Sonarr directly.
+  #
+  # Served on its own PORT rather than a path (see the :5055 block in
+  # caddy/Caddyfile): Jellyseerr inherits Overseerr's lack of subpath support —
+  # it builds absolute URLs from the root, so /jellyseerr/* returns the page and
+  # then 404s every asset. A port keeps it on the same hostname and the same
+  # certificate, which is what actually matters.
+  # Seerr — the project formerly known as Jellyseerr. Overseerr and Jellyseerr
+  # merged into one codebase under seerr-team, moving to ghcr.io and to 3.x.
+  # `fallenbagel/jellyseerr:latest` is frozen at 2.7.3, which is why its own
+  # update banner pointed at a 3.4.1 that has no image under the old name.
+  #
+  # Migration is automatic on first start; it reads the existing /app/config and
+  # upgrades the database in place. The service key stays `jellyseerr` so the
+  # Caddy upstream, container name and dashboard links do not churn.
+  #
+  # Two breaking changes from the migration guide, both handled below:
+  #   init: true          — required; without it the container leaks zombies
+  #   runs as uid 1000    — no `user:` directive, and the config dir must be
+  #                         owned by 1000 (already true here: PUID/PGID=1000)
+  jellyseerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: jellyseerr
+    restart: unless-stopped
+    init: true
+    networks: [medianet]
+    environment:
+      TZ: ${TZ}
+      LOG_LEVEL: info
+    volumes:
+      - ${CONFIG_ROOT}/jellyseerr:/app/config
+
+  # tailscaled as a container — spec §5.2's architecture, reachable on any host.
+  # Registers as node `media`, so `tailscale cert` (and Caddy's
+  # get_certificate) can issue for media.<tailnet>.ts.net: Tailscale only issues
+  # for a node's OWN MagicDNS name, which is the whole reason this is a service
+  # rather than a host install (ADR-005, ADR-016).
+  #
+  # Caddy shares this container's network namespace (network_mode below), so the
+  # tailnet IP and Caddy's listeners are the same stack. That is also why the
+  # published ports live here and not on caddy.
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    hostname: media                       # becomes the MagicDNS name
+    restart: unless-stopped
+    networks: [medianet]
+    # Published on behalf of caddy, which shares this namespace. 5055 is
+    # Jellyseerr's TLS port — Caddy terminates it, jellyseerr itself never
+    # listens on the host.
+    ports: ["80:80", "443:443", "5055:5055"]
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env - generate at Tailscale admin - Settings - Keys}
+      TS_HOSTNAME: media
+      TS_STATE_DIR: /var/lib/tailscale    # persist identity across recreates
+      TS_USERSPACE: "false"               # kernel networking; needs /dev/net/tun
+      TS_EXTRA_ARGS: --accept-dns=false   # don't let the tailnet override Docker's DNS
+      # MUST be set. By default the image puts the real socket at
+      # /tmp/tailscaled.sock and leaves only a SYMLINK in /var/run/tailscale.
+      # /tmp is not shared, so Caddy follows that symlink into its own empty
+      # /tmp and fails every handshake with "no such file or directory".
+      # Pointing tailscaled here puts the actual socket in the shared volume.
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+    volumes:
+      - ${CONFIG_ROOT}/tailscale:/var/lib/tailscale
+      - tailscale-sock:/var/run/tailscale # shared with caddy for cert issuance
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "tailscale", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  caddy:
+    image: caddy:alpine
+    container_name: caddy
+    restart: unless-stopped
+    environment:
+      # The Caddyfile builds its site address from {$TAILNET}, so no tailnet
+      # name is hard-coded in the repo and the same file works anywhere.
+      TAILNET: ${TAILNET:-}
+    # Share tailscaled's network namespace so Caddy listens on the tailnet IP
+    # directly. Consequence: caddy declares no `networks` and no `ports` of its
+    # own — both belong to the tailscale service above. Service names on
+    # medianet (jellyfin, addon) still resolve, because that namespace is on
+    # medianet.
+    network_mode: "service:tailscale"
+    depends_on:
+      tailscale:
+        condition: service_healthy
+    volumes:
+      # Ingress mode switch. Defaults to the LAN file so a fresh clone works
+      # with no tailnet; set CADDYFILE=./caddy/Caddyfile in .env for §5.2.
+      # (§4 mounts this from ${CONFIG_ROOT}/caddy; served from the repo instead
+      # so both modes stay version-controlled — see ADR-013. Selecting the file
+      # is one .env line; the FULL tailnet switch also needs <tailnet>
+      # substituted in caddy/Caddyfile and the tailscaled socket mount below
+      # uncommented — docs/runbook.md §3.)
+      # The source is repo-relative, so compose must be invoked from the repo
+      # directory (or with --project-directory), as the units and runbook do.
+      - ${CADDYFILE:-./caddy/Caddyfile.lan}:/etc/caddy/Caddyfile:ro
+      - ${CONFIG_ROOT}/caddy/data:/data      # cert storage — NEVER mount media here (§3.2)
+      - ${DATA_ROOT}/media:/srv/media:ro
+      - ./caddy/site:/srv/dashboard:ro       # single-page dashboard at /
+      # Pre-issued Tailscale cert for the interim host-level tailnet setup
+      # (caddy/Caddyfile.tshost — ADR-015). Harmless when unused: the LAN and
+      # §5.2 ingress files never reference /tscert.
+      - ${CONFIG_ROOT}/caddy/tscert:/tscert:ro
+      # tailscaled's socket, shared from the tailscale service. This is what
+      # `tls { get_certificate tailscale }` in caddy/Caddyfile talks to, and it
+      # renews on its own — no static cert files, no expiry date (ADR-016).
+      - tailscale-sock:/var/run/tailscale
+
+networks:
+  medianet:
+    name: medianet
+    driver: bridge
+
+volumes:
+  # Socket directory shared between tailscaled and Caddy. A named volume rather
+  # than a bind mount because a unix socket must be created by tailscaled inside
+  # a filesystem both containers see; Windows bind mounts cannot carry one.
+  tailscale-sock:

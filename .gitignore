@@ -1,0 +1,15 @@
+# Secrets — §0.3: .env is never committed, .env.example is.
+.env
+.env.local
+
+# Machine-local compose tweaks (e.g. the Windows dev box's no-/dev/dri override)
+docker-compose.override.yml
+
+# Node
+node_modules/
+dist/
+
+# SQLite index and *arr databases — derived state, never source (§8, N5)
+*.db
+*.db-wal
+*.db-shm

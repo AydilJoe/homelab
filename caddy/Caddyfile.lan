@@ -1,0 +1,55 @@
+# LAN INGRESS — plain HTTP on :80. This is the ACTIVE default (CADDYFILE in
+# .env points here). Nothing in this file requires a tailnet.
+#
+# CLIENT SUPPORT:
+#   Stremio Desktop  — accepts plain-HTTP addon URLs. Works over the LAN today.
+#                      Install from http://<lxc-lan-ip>/addon/manifest.json
+#   Stremio Web/iOS/Android — refuse plain HTTP. They need TLS, which means the
+#                      tailnet phase (§5.2, caddy/Caddyfile). No LAN workaround.
+#
+# Routing is identical to the tailnet file — the only differences are the site
+# address and the absence of `tls`. Selecting the other file is one .env line
+# (CADDYFILE), but the FULL tailnet switch is more than that: you must also
+# substitute <tailnet> in caddy/Caddyfile and uncomment the tailscaled socket
+# mount on the caddy service in docker-compose.yml, or Caddy cannot fetch a
+# certificate. docs/runbook.md §3 has the complete five-step sequence.
+#
+# PUBLIC_BASE_URL in .env must match how clients reach this host over the LAN
+# (e.g. http://192.168.1.50) — that value is baked into every stream URL.
+
+:80 {
+  # static media files — file_server handles Range requests
+  # (Phase 6 gate: a ranged GET must return 206, not 200, or seeking breaks)
+  handle_path /media/* {
+    root * /srv/media
+    file_server
+  }
+
+  # the admin surface is never routed through Caddy — the longer path
+  # matcher wins over /addon/*. The addon's own port is loopback-bound
+  # (127.0.0.1:7000), so /admin stays reachable only from a shell on the LXC.
+  handle /addon/admin/* {
+    respond 403
+  }
+
+  # Stremio addon
+  handle_path /addon/* {
+    reverse_proxy addon:7000
+  }
+
+  # requires Base URL = /jellyfin in Jellyfin → Networking
+  # (record in docs/manual-config.md). Wrapped in `handle` because of the
+  # dashboard catch-all below: a bare reverse_proxy runs AFTER handle in
+  # Caddy's directive order, so without the wrapper the catch-all would
+  # swallow /jellyfin/* first. Handle blocks sort by matcher specificity.
+  handle /jellyfin/* {
+    reverse_proxy jellyfin:8096
+  }
+
+  # dashboard — served for everything no other route claims. A matcher-less
+  # handle is the least specific, so it always loses to the routes above.
+  handle {
+    root * /srv/dashboard
+    file_server
+  }
+}
